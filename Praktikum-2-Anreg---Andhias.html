@@ -515,9 +515,9 @@ dbt &lt;- n-1
 
 (Fhit &lt;- (JKReg/dbReg)/(JKG/dbg))</code></pre>
 <pre><code>## [1] 109.3669</code></pre>
-<pre class="r"><code>(p_Fhit &lt;- 1-pf(Fhit, dbReg, dbg, lower.tail = F))</code></pre>
-<pre><code>## [1] 1</code></pre>
-<p>Nilai p lebih dari alpha 0.05 sehingga secara simultan X dan Y tidak
+<pre class="r"><code>(p_Fhit &lt;- pf(Fhit, dbReg, dbg, lower.tail = F))</code></pre>
+<pre><code>## [1] 1.792162e-18</code></pre>
+<p>Nilai p kurang dari alpha 0.05 sehingga secara simultan X dan Y
 saling memengaruhi</p>
 </div>
 </div>
@@ -566,7 +566,7 @@ hasil yang sama dalam membuat pemodelan regresi linear sederhana.</p>
 <p>Model yang terbentuk adalah sebagai berikut:</p>
 <p><span class="math display">\[\hat{Y} = 84.2552  -
 0.9377205  X_1\]</span></p>
-<p>dengan Y adalah Indeks Pembangunan Manusia dan X6 adalah persentase
+<p>dengan Y adalah Indeks Pembangunan Manusia dan X3 adalah persentase
 penduduk miskin.</p>
 <p>Didapatkan nilai <span class="math inline">\(\hat\beta_0 =
 84.2552\)</span> artinya nilai dugaan rataan indeks pembangunan manusia
