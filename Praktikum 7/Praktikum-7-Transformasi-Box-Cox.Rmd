@@ -1,0 +1,414 @@
+---
+title: "Praktikum 7: Transformasi Box-Cox dalam Analisis Regresi Linear Berganda"
+subtitle: "Penanganan Asumsi Normalitas Sisaan"
+author: "Andhias Abdillah Ridhp"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+    code_folding: show
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  message    = FALSE,
+  warning    = FALSE,
+  fig.align  = "center",
+  fig.width  = 8,
+  fig.height = 5,
+  comment    = "#>"
+)
+```
+
+
+# Asumsi-Asumsi Klasik Regresi Linear
+
+Asumsi sisaan yang harus dipenuhi dari model regresi linear adalah sebagai berikut:
+
+1. Nilai harapan galat sama dengan nol: $E[\varepsilon_i] = 0$
+2. Homoskedastisitas atau ragam galat homogen: $\text{Var}[\varepsilon] = \sigma^2 I$
+3. Tidak terdapat autokorelasi atau galat saling bebas: $E[\varepsilon_i, \varepsilon_j] = 0$
+4. Galat menyebar normal: $\varepsilon \sim N(0, \sigma^2 I)$
+5. Tidak terdapat multikolinearitas antarpeubah bebas: $\text{cov}(x_i, x_j) = 0, \forall i \neq j$
+
+Apabila terdapat asumsi sisaan yang dilanggar pada model, maka diperlukan penanganan kondisi tak standar. Salah satu metode yang umum digunakan untuk menangani pelanggaran asumsi normalitas sisaan adalah **transformasi Box-Cox**, yang akan menjadi fokus utama dalam praktikum ini.
+
+# Persiapan
+
+## Library
+
+Berikut adalah paket-paket yang digunakan dalam analisis ini beserta fungsinya:
+
+```{r library}
+library(dplyr)     # Manipulasi data
+library(GGally)    # Visualisasi hubungan antarpeubah
+library(psych)     # Analisis data dan korelasi
+library(car)       # Uji multikolinearitas dan Durbin-Watson
+library(lmtest)    # Uji Breusch-Pagan
+library(corrplot)  # Visualisasi matriks korelasi
+library(nortest)   # Uji normalitas Lilliefors
+library(MASS)      # Transformasi Box-Cox
+```
+
+## Pemuatan Data
+
+Data yang digunakan dalam analisis ini adalah `state.x77`, yaitu data bawaan perangkat lunak R yang berisi statistik dari 50 negara bagian Amerika Serikat. Peubah respons yang akan dimodelkan adalah `Income` (pendapatan per kapita).
+
+```{r data}
+data <- as.data.frame(state.x77)
+data <- data %>% dplyr::select(Income, everything())
+data <- data[, -7]  # Menghapus peubah Frost
+head(data, 10)
+```
+
+# Pemodelan Regresi Linear
+
+## Eksplorasi Data
+
+Sebagai langkah awal analisis, perlu dilakukan eksplorasi terhadap seluruh peubah yang digunakan. Eksplorasi paling dasar dalam proses analisis regresi adalah pengecekan sebaran tiap peubah dan deteksi potensi amatan anomali (pencilan maupun *leverage*). Setiap peubah diharapkan menyebar (atau menyerupai sebaran) normal dan bebas dari amatan anomali.
+
+```{r eksplorasi-pairs, fig.cap="Matriks Scatterplot Antarpeubah"}
+pairs.panels(data)
+```
+
+```{r eksplorasi-ggpairs, fig.cap="Matriks Scatterplot dengan ggpairs"}
+ggpairs(
+  data,
+  upper = list(continuous = wrap("cor", size = 3)),
+  title = "Matriks Scatterplot Data"
+)
+```
+
+```{r eksplorasi-corrplot, fig.cap="Heatmap Korelasi Antarpeubah"}
+cor_matrix <- cor(data, use = "complete.obs")
+corrplot(
+  cor_matrix,
+  method = "color",
+  type = "lower",
+  col = colorRampPalette(c("red", "white", "blue"))(200),
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 35
+)
+```
+
+Hasil eksplorasi terhadap hubungan setiap peubah penjelas dengan peubah respons menyatakan bahwa peubah `Income` memiliki hubungan positif terhadap `Population`, `Life Exp`, `HS Grad`, dan `Area`, serta hubungan negatif terhadap `Illiteracy` dan `Murder`.
+
+## Pemodelan Awal
+
+### Pengujian Multikolinearitas
+
+Sebelum membentuk model regresi, perlu dilakukan pemeriksaan multikolinearitas antarpeubah penjelas menggunakan nilai *Variance Inflation Factor* (VIF). Apabila nilai VIF lebih besar dari 10, maka terdapat indikasi multikolinearitas yang serius.
+
+```{r vif}
+model <- lm(Income ~ ., data = data)
+(vif_model <- vif(model))
+```
+
+Setelah dilakukan pengujian, diketahui bahwa **tidak terdapat multikolinearitas** antarpeubah penjelas. Hal ini diindikasikan oleh nilai VIF $< 10$ pada seluruh peubah penjelas yang digunakan.
+
+### Ringkasan Model Penuh
+
+```{r model-penuh}
+summary(model)
+```
+
+Pemodelan menggunakan seluruh peubah menyiratkan bahwa hanya peubah penjelas `Population` dan `HS Grad` yang berpengaruh signifikan pada taraf nyata 5% terhadap peubah respons `Income`. Oleh karena itu, perlu dilakukan penyeleksian peubah agar model yang dihasilkan terbaik dalam hal signifikansi peubah.
+
+# Seleksi Peubah
+
+## Metode Backward Elimination
+
+Prosedur seleksi peubah dengan metode *backward elimination* berjalan sebagai berikut:
+
+1. Pemodelan dimulai dengan melibatkan seluruh peubah penjelas yang tersedia.
+2. Satu per satu peubah penjelas dieliminasi berdasarkan nilai F-parsial yang paling besar (paling tidak berpengaruh signifikan) terhadap peubah respons.
+3. Peubah penjelas yang telah dieliminasi tidak akan dikembalikan ke dalam model.
+4. Eliminasi peubah penjelas terus dilakukan hingga diperoleh model terbaik berdasarkan metrik yang diacu (umumnya AIC).
+
+```{r backward}
+step(lm(Income ~ ., data = data), direction = "backward")
+```
+
+Berdasarkan prosedur seleksi peubah dengan metode *backward*, model terbaik yang terbentuk adalah model dengan tiga peubah penjelas, yaitu `Population`, `HS Grad`, dan `Area`.
+
+## Metode Forward Selection
+
+Prosedur seleksi peubah dengan metode *forward selection* berjalan sebagai berikut:
+
+1. Pemodelan dimulai hanya dengan intersep.
+2. Satu per satu peubah penjelas dimasukkan ke dalam model berdasarkan nilai koefisien korelasi yang paling besar terhadap peubah respons.
+3. Peubah penjelas yang telah dimasukkan tidak akan dieliminasi dari model.
+4. Imputasi peubah penjelas terus dilakukan hingga diperoleh model terbaik berdasarkan metrik yang diacu (umumnya AIC).
+
+```{r forward}
+step(
+  lm(Income ~ 1, data = data),
+  direction = "forward",
+  scope = ~ Population + Illiteracy + `Life Exp` + Murder + `HS Grad` + Area
+)
+```
+
+Berdasarkan prosedur seleksi peubah dengan metode *forward*, model terbaik yang terbentuk adalah model dengan tiga peubah penjelas yang sama, yaitu `Population`, `HS Grad`, dan `Area`.
+
+## Metode Stepwise
+
+Prosedur seleksi peubah *stepwise* merupakan kombinasi antara metode *backward* dan *forward*. Model pertama yang dibentuk adalah model dengan seluruh peubah penjelas yang kemudian akan dieliminasi satu per satu. Meskipun demikian, peubah yang telah dieliminasi masih memiliki kemungkinan untuk diimputasi kembali ke dalam model.
+
+```{r stepwise}
+step(lm(Income ~ ., data = data), direction = "both")
+```
+
+Berdasarkan prosedur seleksi peubah dengan metode *stepwise*, model terbaik yang terbentuk konsisten dengan kedua metode sebelumnya, yaitu model dengan tiga peubah penjelas: `Population`, `HS Grad`, dan `Area`.
+
+## Model Terbaik
+
+```{r model-terbaik}
+model2 <- lm(Income ~ Population + `HS Grad` + Area, data = data)
+summary(model2)
+```
+
+Persamaan regresi yang terbentuk dari hasil penyeleksian peubah adalah sebagai berikut:
+
+$$
+\hat{Y} = 1807 + 0{,}0362\,X_1 + 45{,}08\,X_2 + 0{,}00115\,X_3
+$$
+
+dengan $X_1 = \text{Population}$, $X_2 = \text{HS Grad}$, dan $X_3 = \text{Area}$.
+
+Dari ketiga peubah tersebut, hanya `Area` yang tidak signifikan pada taraf nyata 5%. Nilai *adjusted* $R^2$ sedikit meningkat dari model dengan seluruh peubah, yakni menjadi $0{,}4462$.
+
+# Diagnostik Sisaan
+
+## Eksplorasi Grafik
+
+### Plot Sisaan terhadap Nilai Dugaan
+
+```{r plot-residual-fitted, fig.cap="Plot Sisaan vs Nilai Dugaan"}
+plot(model2, 1)
+```
+
+Interpretasi plot di atas adalah sebagai berikut:
+
+1. Sisaan tersebar di sekitar nol $\rightarrow$ nilai harapan sisaan sama dengan nol.
+2. Lebar pita relatif sama untuk setiap nilai dugaan $\rightarrow$ ragam sisaan homogen.
+3. Pola plot acak $\rightarrow$ model sudah pas dan ragam sisaan homogen.
+
+### Plot Sisaan terhadap Urutan Pengamatan
+
+```{r plot-residual-order, fig.cap="Plot Sisaan vs Urutan Pengamatan"}
+plot(
+  x = 1:dim(data)[1],
+  y = model2$residuals,
+  type = "b",
+  ylab = "Residuals",
+  xlab = "Observation"
+)
+```
+
+Tebaran tidak menunjukkan pola tertentu, yang berarti sisaan saling bebas dan model sudah pas.
+
+### Normal Q-Q Plot
+
+```{r qq-plot, fig.cap="Normal Q-Q Plot Sisaan"}
+plot(model2, 2)
+```
+
+Amatan cenderung mengikuti garis pola, sehingga secara visual sisaan terlihat menyebar normal.
+
+## Uji Formal
+
+### Uji Nilai Harapan Sisaan Sama dengan Nol
+
+```{r uji-mean}
+t.test(model2$residuals, mu = 0, conf.level = 0.95)
+```
+
+Nilai-$p$ pada uji $t$ sama dengan $1$, yang lebih besar daripada $\alpha = 5\%$. Dengan demikian, asumsi nilai harapan sisaan sama dengan nol **terpenuhi**.
+
+### Uji Homoskedastisitas (Breusch-Pagan)
+
+```{r uji-bp}
+bptest(model2)
+```
+
+Nilai-$p$ pada uji Breusch-Pagan sama dengan $0{,}3441$, yang lebih besar daripada $\alpha = 5\%$. Dengan demikian, asumsi ragam sisaan homogen **terpenuhi**.
+
+### Uji Autokorelasi (Durbin-Watson)
+
+```{r uji-dw}
+dwtest(model2)
+```
+
+Nilai-$p$ pada uji Durbin-Watson sama dengan $0{,}5386$, yang lebih besar daripada $\alpha = 5\%$. Dengan demikian, asumsi sisaan saling bebas **terpenuhi**.
+
+### Uji Normalitas Sisaan
+
+```{r uji-normal}
+lillie.test(model2$residuals)  # Cocok untuk ukuran sampel sedang
+shapiro.test(model2$residuals) # Cocok untuk ukuran sampel kecil
+```
+
+Nilai-$p$ pada uji Shapiro-Wilk sama dengan $0{,}0989$ (lebih besar dari $\alpha = 5\%$), tetapi nilai-$p$ pada uji Lilliefors sama dengan $0{,}0101$ (lebih kecil dari $\alpha = 5\%$). Pada praktikum ini, hasil uji Lilliefors yang digunakan agar dapat diterapkan penanganan asumsi. Dengan demikian, asumsi **normalitas sisaan tidak terpenuhi** dan perlu dilakukan penanganan.
+
+# Penanganan Pelanggaran Asumsi Normalitas
+
+## Konsep Transformasi Box-Cox
+
+Salah satu langkah penanganan kondisi tak standar berupa pelanggaran asumsi normalitas sisaan adalah transformasi peubah respons. Metode transformasi yang umum digunakan adalah metode **Box-Cox** dengan rumus transformasi sebagai berikut:
+
+$$
+y' =
+\begin{cases}
+\dfrac{y^\lambda - 1}{\lambda}, & \text{jika } \lambda \neq 0 \\[6pt]
+\ln(y), & \text{jika } \lambda = 0
+\end{cases}
+$$
+
+Parameter $\lambda$ optimum diperoleh dengan memaksimumkan fungsi *log-likelihood*.
+
+## Penentuan Lambda Optimum
+
+```{r boxcox, fig.cap="Plot Log-Likelihood terhadap Lambda"}
+bc_model <- boxcox(
+  Income ~ Population + `HS Grad` + Area,
+  data = data,
+  lambda = seq(-2, 2, by = 0.1)
+)
+(optimal_lambda <- bc_model$x[which.max(bc_model$y)])
+```
+
+Berdasarkan grafik di atas, diketahui bahwa $\lambda$ optimum bernilai $0{,}18182$.
+
+## Transformasi Peubah Respons
+
+Selanjutnya, dilakukan transformasi peubah respons menggunakan $\lambda$ optimum yang telah diperoleh.
+
+```{r transformasi}
+data$Income_tr <- ((data$Income)^optimal_lambda) - 1/optimal_lambda
+
+data2 <- data[, -1] %>% dplyr::select(Income_tr, everything())
+head(data2, 10)
+```
+
+# Diagnostik Sisaan Setelah Transformasi
+
+Setelah dilakukan transformasi Box-Cox pada peubah respons, langkah berikutnya adalah membangun ulang model regresi dan melakukan diagnostik sisaan terhadap data yang telah ditransformasi.
+
+## Pemodelan Ulang
+
+```{r model-trans}
+model3 <- lm(
+  Income_tr ~ Population + Illiteracy + `HS Grad` + Area,
+  data = data2
+)
+summary(model3)
+```
+
+Model terbaik hasil transformasi menghasilkan nilai *adjusted* $R^2$ sebesar $46{,}81\%$, yang lebih baik dibandingkan dengan model sebelum transformasi. Model tersebut dapat ditulis sebagai berikut:
+
+$$
+\hat{Y}^* = -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3
+$$
+
+dengan $\hat{Y}^* = \dfrac{Y^{0{,}18182} - 1}{0{,}18182}$.
+
+## Eksplorasi Grafik
+
+### Plot Sisaan terhadap Nilai Dugaan
+
+```{r plot-residual-fitted-trans, fig.cap="Plot Sisaan vs Nilai Dugaan Setelah Transformasi"}
+plot(model3, 1)
+```
+
+### Plot Sisaan terhadap Urutan Pengamatan
+
+```{r plot-residual-order-trans, fig.cap="Plot Sisaan vs Urutan Pengamatan Setelah Transformasi"}
+plot(
+  x = 1:dim(data2)[1],
+  y = model3$residuals,
+  type = "b",
+  ylab = "Residuals",
+  xlab = "Observation"
+)
+```
+
+### Normal Q-Q Plot
+
+```{r qq-plot-trans, fig.cap="Normal Q-Q Plot Sisaan Setelah Transformasi"}
+plot(model3, 2)
+```
+
+## Uji Formal Setelah Transformasi
+
+### Uji Nilai Harapan Sisaan
+
+```{r uji-mean-trans}
+t.test(model3$residuals, mu = 0, conf.level = 0.95)
+```
+
+Nilai-$p$ sama dengan $1$, yang lebih besar daripada $\alpha = 5\%$. Asumsi nilai harapan sisaan sama dengan nol **terpenuhi**.
+
+### Uji Homoskedastisitas
+
+```{r uji-bp-trans}
+bptest(model3)
+```
+
+Nilai-$p$ sama dengan $0{,}3075$, yang lebih besar daripada $\alpha = 5\%$. Asumsi ragam sisaan homogen **terpenuhi**.
+
+### Uji Autokorelasi
+
+```{r uji-dw-trans}
+dwtest(model3)
+```
+
+Nilai-$p$ sama dengan $0{,}4624$, yang lebih besar daripada $\alpha = 5\%$. Asumsi sisaan saling bebas **terpenuhi**.
+
+### Uji Normalitas
+
+```{r uji-normal-trans}
+lillie.test(model3$residuals)
+```
+
+Nilai-$p$ pada uji Lilliefors sama dengan $0{,}1124$, yang lebih besar daripada $\alpha = 5\%$. Asumsi **normalitas sisaan terpenuhi**, yang menunjukkan bahwa transformasi Box-Cox berhasil mengatasi permasalahan pelanggaran asumsi.
+
+# Transformasi Balik
+
+Apabila ingin mengembalikan model untuk menjelaskan peubah respons sebelum ditransformasi, perlu dilakukan transformasi balik pada model yang telah dibentuk. Prosedur transformasi balik dilakukan melalui operasi matematika dengan mengutamakan pengubahan peubah respons terlebih dahulu. Proses transformasi balik dapat diilustrasikan sebagai berikut:
+
+$$
+\begin{aligned}
+\hat{Y}^* &= -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3 \\[6pt]
+\frac{\hat{Y}^{0{,}18182} - 1}{0{,}18182} &= -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3 \\[6pt]
+\hat{Y}^{0{,}18182} - 1 &= 0{,}18182 \times \left( -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3 \right) \\[6pt]
+\hat{Y}^{0{,}18182} &= 0{,}18182 \times \left( -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3 \right) + 1 \\[6pt]
+\hat{Y} &= \left[ 0{,}18182 \times \left( -1{,}252 + 7{,}421 \times 10^{-6}\,X_1 - 4{,}178 \times 10^{-4}\,X_2 + 2{,}476 \times 10^{-7}\,X_3 \right) + 1 \right]^{\tfrac{1}{0{,}18182}}
+\end{aligned}
+$$
+
+# Simpulan
+
+Berdasarkan analisis yang telah dilakukan, dapat disimpulkan beberapa hal sebagai berikut:
+
+1. Model regresi linear awal yang dibangun dengan data `state.x77` mengalami pelanggaran asumsi normalitas sisaan berdasarkan uji Lilliefors.
+2. Tiga peubah penjelas terpilih melalui proses seleksi peubah (*backward*, *forward*, dan *stepwise*) yang menghasilkan kombinasi peubah yang konsisten, yaitu `Population`, `HS Grad`, dan `Area`.
+3. Transformasi Box-Cox dengan $\lambda$ optimum sebesar $0{,}18182$ berhasil mengatasi pelanggaran asumsi normalitas sisaan, sekaligus meningkatkan nilai *adjusted* $R^2$ model dari $44{,}62\%$ menjadi $46{,}81\%$.
+4. Seluruh asumsi klasik regresi linear terpenuhi setelah dilakukan transformasi Box-Cox pada peubah respons.
+5. Transformasi balik dapat dilakukan jika ingin menginterpretasikan model dalam skala asli peubah respons.

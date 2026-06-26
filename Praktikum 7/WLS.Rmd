@@ -1,0 +1,156 @@
+---
+title: "Transformasi WLS"
+author: "Andhias Abdillah Ridho"
+date: "2026-06-26"
+output: html_document
+---
+
+```{r}
+library(datarium)
+library(dplyr)
+library(ggplot2)
+library(lmtest)
+```
+
+```{r}
+data<-marketing[,c("youtube","sales")]
+head(data)
+```
+
+# OLS
+
+```{r}
+ggplot(data) + 
+  geom_point(mapping = aes(youtube, sales)) +
+  geom_smooth(mapping = aes(youtube,sales), 
+              method=lm, se=F)+
+  labs(title = "Scatterplot of Sales ~ Youtube")
+```
+
+```{r}
+model<-lm(sales~youtube, data=data)
+summary(model)
+```
+# Diagnostik Sisaan / Pengujian Asumsi
+## Eksplorasi Grafik
+### Plot Sisaan vs Yduga
+```{r}
+plot(model,1)
+```
+
+Sisaan di sekitar 0 → Nilai harapan sisaan sama dengan nol
+Lebar pita sama untuk setiap nilai dugaan
+Pola plot membentuk seperti megafon → ragam sisaan tidak homogen
+
+### Plot sisaan vs urutan
+```{r}
+plot(x = 1:dim(data)[1],
+     y = model$residuals,
+     type = 'b', 
+     ylab = "Residuals",
+     xlab = "Observation")
+```
+Tebaran tidak berpola → sisaan saling bebas, model pas
+
+### QQ plot
+```{r}
+plot(model,2)
+```
+Amatan cenderung mengikuti garis pola sehingga sisaan menyebar normal
+
+## Uji Formal
+### Nilai harapan sisaan sama dengan nol
+```{r}
+t.test(model$residuals,mu = 0,conf.level = 0.95)
+```
+Nilai p pada uji t sama dengan 1 yang lebih besar dari alpha 5%, sehingga dinyatakan asumsi nilai harapan sisaan sama dengan nol terpenuhi
+
+### Ragam sisaan homogen
+```{r}
+bptest(model)
+```
+Nilai p pada uji breusch pagan sama dengan <0 yang kurang dari alpha 5%, sehingga dinyatakan asumsi ragam sisaan homogen tidak terpenuhi
+
+### Sisaan saling bebas
+```{r}
+dwtest(model)
+```
+Nilai p pada uji durbin watson sama dengan 0.3213 yang lebih besar dari alpha 5%, sehingga dinyatakan asumsi sisaan saling bebas terpenuhi
+
+### Normalitas Sisaan
+```{r}
+ks.test(model$residuals, "pnorm", mean = mean(model$residuals),
+        sd = sd(model$residuals))
+```
+
+Nilai p pada uji shapiro wilk sama dengan 0.8806 yang lebih besar dari alpha 5%, sehingga dinyatakan asumsi normalitas sisaan terpenuhi.
+
+# WLS
+## Perhitungan Weights
+```{r}
+resid_abs <- abs(model$residuals)
+fit <- lm(resid_abs ~ data$youtube)
+data.weights <- 1 / fit$fitted.values^2
+```
+
+## Pemodelan
+```{r}
+model.lmw <- lm(sales~ youtube, 
+              data = data, 
+              weights = data.weights)
+summary(model.lmw)
+```
+Nilai adjusted R square yang dihasilkan pada model ini mencapai 72.84% yang meningkat dari model OLS
+
+## Perbandingan Sisaan pada OLS dan WLS
+```{r}
+par(mfrow=c(1,2))
+plot(y = rstandard(model),
+     x = model$fitted.values,
+     main="OLS")
+abline(h=0, col="red")
+plot(y = rstandard(model.lmw),
+     x = model.lmw$fitted.values,
+     main="WLS")
+abline(h=0, col="red")
+```
+
+```{r}
+par(mfrow=c(1,1))
+```
+
+## Perbandingan Garis Regresi OLS dan WLS
+```{r}
+ggplot(data = data, aes(youtube, sales)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE,
+              color = "blue", 
+              size = 0.9) +
+  geom_smooth(method = lm, se = FALSE, 
+              aes(weight = data.weights),
+              color = "red", 
+              size = 0.9)+
+  labs(title = "Scatterplot of Sales ~ Youtube")
+```
+
+## Uji Formal
+### Nilai harapan sisaan sama dengan nol
+
+```{r}
+t.test(model.lmw$residuals,mu = 0,conf.level = 0.95)
+```
+Nilai p pada uji t sama dengan 0.5925 yang lebih besar dari alpha 5%, sehingga dinyatakan asumsi nilai harapan sisaan sama dengan nol terpenuhi
+
+### Ragam Sisaan Homogen
+```{r}
+bptest(model.lmw)
+```
+Nilai p pada uji breusch pagan sama dengan 0.02574 yang masih kurang dari alpha 5%, sehingga dinyatakan asumsi ragam sisaan homogen tidak terpenuhi. Walau demikian nilai ini sudah jauh lebih baik dari sebelumnya
+
+### Normalitas Sisaan
+```{r}
+ks.test(model.lmw$residuals, "pnorm", mean = mean(model.lmw$residuals),
+        sd = sd(model.lmw$residuals))
+```
+Nilai p pada uji shapiro wilk sama dengan 0.1662 yang lebih besar dari alpha 5%, sehingga dinyatakan asumsi normalitas sisaan terpenuhi.
+
