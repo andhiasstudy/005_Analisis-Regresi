@@ -1,0 +1,181 @@
+---
+title: "Praktikum 5 Anreg"
+author: "Andhias Abdillah Ridho"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown
+---
+
+# Library
+
+```{r}
+library(readxl) # untuk membaca data
+library(GGally) # untuk menghasilkan matriks hubungan antarpeubah
+library(corrplot) # untuk menghasilkan matriks korelasi
+library(dplyr) # untuk manipulasi data
+library(car) # untuk memeriksa multikolinearitas
+```
+
+# Data
+
+```{r}
+data <- read_xlsx("C:\\Users\\LENOVO\\Downloads\\Dataset Praktikum AnReg - Andhias (1).xlsx", sheet="Sheet1")
+head(data) # menampilkan sekian data awal
+str(data) # menampilkan tipe data setiap peubah
+summary(data) # menampilkan ringkasan data
+```
+
+Data yang digunakan adalah data dari 514 Kabupaten/Kota di Indonesia pada Tahun 2025 dengan 1 peubah respon yaitu Prevalensi Ketidakcukupan Konsumsi Pangan dan 11 peubah penjelas yang terdiri dari 11 peubah kuantitatif. Peubah tersebut adalah Rata-rata Pengeluaran Perkapita Seminggu Menurut Kelompok Daging, Telur, Susu, Ikan, Minyak dan Kelapa, Bumbu-bumbuan, Kacang-kacangan, Sayur-sayuran, Umbi-umbian, Padi-padian, dan Buah-buahan.
+
+
+
+
+# Eksplorasi data
+
+```{r}
+hist(data$Y, main = "Prevalensi Ketidakcukupan Konsumsi Pangan")
+```
+
+```{r}
+boxplot(data$Y, main = "Prevalensi Ketidakcukupan Konsumsi Pangan")
+```
+
+```{r}
+library(GGally)
+
+ggpairs(data[, c("Y", "X1", "X2", "X3", "X4", "X5",
+                 "X6", "X7", "X8", "X9", "X10", "X11")])
+```
+
+```{r}
+cor_matrix <- cor(data[, c("Y", "X1", "X2", "X3", "X4", "X5",
+                 "X6", "X7", "X8", "X9", "X10", "X11")])
+corrplot(cor_matrix,
+         method = "color",
+         type = "lower",
+         tl.cex = 0.8,
+         addCoef.col = "black",
+         number.cex = 0.6,
+         cl.lim = c(-1, 1))
+```
+
+Hasil matriks scatter plot dan korelasi menunjukkan bahwa peubah respon memiliki hubungan positif dengan X1, X4, X5, X6, X8, X9, dan X10, serta hubungan negatif dengan X2, X3, X7, dan X11.
+
+Selain itu, terdapat banyak korelasi tinggi antar peubah penjelas. Beberapa di antaranya adalah:
+1. X2 dan X1 memiliki korelasi 0.63.
+2. X8 dan X1 memiliki korelasi 0.64.
+3. X8 dan X5 memiliki korelasi 0.67.
+
+Korelasi yang tinggi ini mengindikasikan adanya potensi multikolinearitas, yang dapat mempengaruhi keakuratan model yang akan dibentuk.
+
+# Pemodelan
+
+## Tanpa Fungsi
+
+Perhitungan nilai $\hat{\beta}$ secara matriks dapat dilakukan dengan rumus berikut.
+
+$$\hat{\beta} = (X'X)^{-1} X'y$$
+
+```{r}
+# pembentukan matriks
+n <- nrow(data)
+x0 <- rep(1,n)
+x <- data.frame(x0, data$X1, data$X2, data$X3,
+                data$X4, data$X5, data$X6, data$X7, data$X8, data$X9, data$X10, data$X11)
+x <- as.matrix(x)
+y <- data$Y
+```
+
+```{r}
+beta_duga <- solve(t(x)%*%x)%*%t(x)%*%y
+beta_duga
+```
+
+Hasil tersebut menjelaskan bahwa persamaan yang terbentuk adalah
+$$$$\hat{PPM} = 23.73 + 0.00030X_1 - 0.00205X_2 - 0.00061X_3 + 0.00022X_4 + 0.00050X_5 + 0.00082X_6 - 0.00015X_7 + 0.00025X_8 + 0.00017X_9 - 0.00020X_{10} - 0.00069X_{11}$$$$
+Selang kepercayaan dan pengujian signifikansi setiap parameter dapat dilakukan dengan menghitung keragaman tiap dugaan parameter. Secara umum, nilai ragam dugaan parameter $\hat{\beta}_j$ dapat dihitung melalui rumus berikut.
+
+$$Var(\hat{\beta}_j) = \hat{\sigma}^2 C_{jj}$$
+Dengan matriks $C$ adalah matriks $(X'X)^{-1}$ 
+
+```{r}
+c <- data.frame(solve(t(x)%*%x))
+```
+
+Unsur diagonal dari matriks $C$ dapat digunakan untuk menghitung nilai galat baku dari setiap dugaan parameter. Galat baku ini dapat digunakan untuk menghitung selang kepercayaan dari dugaan yang dihasilkan.
+
+$$SE(\hat{\beta}_j) = \sqrt{Var(\hat{\beta}_j)} = \sqrt{\sigma^2 C_{jj}} = \hat{\sigma}\sqrt{c_{ii}}$$
+
+Misal ingin dihitung selang kepercayaan dari dugaan parameter $\beta_2$, maka
+
+```{r}
+y_hat <- x %*% beta_duga
+residuals <- y - y_hat
+n <- nrow(x)
+p <- ncol(x)
+KTG <- sum(residuals^2) / (n - p) 
+
+c22 <- c[2,2]
+
+(se.b2 <- sqrt(KTG*c22))
+```
+
+```{r}
+alfa <- 0.05
+
+#Batas Bawah beta2
+(bb.b2 <- beta_duga[3,1] - abs(qt(alfa/2, df=n-p))*se.b2)
+```
+
+```{r}
+#Batas Atas beta2
+(ba.b2 <- beta_duga[3,1] + abs(qt(alfa/2, df=n-p))*se.b2)
+```
+
+Dengan demikian, kita dapat ketahui selang kepercayaan untuk $\hat{\beta}_2$ sebagai berikut.
+$$−0.7279<\hat{\beta}_2<2.1135$$
+
+Pada kasus selang kepercayaan $\hat{\beta}_2$ di atas, didapati bahwa dugaan parameter berada dalam rentang yang mengandung nilai 0. Dengan demikian, dapat dimaknai bahwa diduga nilai parameter $\hat{\beta}_2$ bernilai 0 atau tidak signifikan dalam taraf nyata 5%.
+
+
+# Dengan Fungsi
+
+```{r}
+model1 <- lm(formula = Y ~ ., data = data)
+summary(model1)
+```
+
+Dugaan parameter model secara matriks dan fungsi menghasilkan angka yang sama, sehingga perhitungan matriks memang sudah tepat. Pada ringkasan model ini dapat dilihat bahwa tidak ada parameter yang signifikan pada taraf nyata 5%, namun secara simultan model ini signifikan dengan nilai p yang lebih kecil dari alpha yaitu 2,2 x 10^-6. Hal ini mengindikasi model yang buruk, kemungkinan terjadi pelanggaran asumsi sisaan maupun multikolinearitas, yang ditunjukkan pula dengan perubahan tanda korelasi pada peubah RLS.
+
+# Pemeriksaan Multikoliniearitas
+
+```{r}
+model1 <- lm(
+  Y ~ X1 + X2 + X3 + X4 + X5 + X6 +
+       X7 + X9 + X10 + X11,
+  data = data
+)
+
+car::vif(model1)
+```
+
+Hasil uji ini menunjukkan peubah tidak memiliki nilai VIF > 10. Maka, tidak terdapat peubah yg dihapus.
+
+# Pemodelan Kedua
+
+```{r}
+model2 <- lm(Y ~ ., data = data)
+summary(model2)
+```
+
+```{r}
+model2 <- lm(
+  Y ~ X1 + X2 + X3 + X4 + X5 + X6 +
+       X7 + X9 + X10 + X11,
+  data = data
+)
+
+car::vif(model2)
+```
+
+Model hasil reduksi peubah menunjukkan bahwa nilai VIF < 10 sehingga dinyatakan tidak terjadi multikolinearitas. Namun seluruh parameter masih tidak signifikan, padahal secara simultan model ini sudah signifikan. Artinya ada permasalahan lain yang mungkin belum tertangani, perlu dilakuan uji asumsi dan pemeriksaan pencilan, leverage, dan amatan berpengaruh
